@@ -2,8 +2,8 @@
 
 from html import escape
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor, QTextDocument
+from PySide6.QtCore import QPoint, Qt
+from PySide6.QtGui import QColor, QImage, QPainter, QPixmap, QTextCharFormat, QTextCursor, QTextDocument
 from PySide6.QtWidgets import QFrame, QLabel, QSizePolicy, QTextEdit, QVBoxLayout
 
 
@@ -19,7 +19,7 @@ class PreviewPane(QFrame):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 12)
+        layout.setContentsMargins(0, 4, 0, 12)
         layout.setSpacing(4)
 
         self.title_label = QLabel(title)
@@ -46,6 +46,11 @@ class PreviewPane(QFrame):
         self.content.setTabStopDistance(32)
         page_layout.addWidget(self.content)
         layout.addWidget(self.page, alignment=Qt.AlignmentFlag.AlignHCenter)
+
+        self._monochrome_overlay = QLabel(self.page)
+        self._monochrome_overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._monochrome_overlay.setGeometry(self.page.rect())
+        self._monochrome_overlay.hide()
 
         self.pages: list[str] = []
         self.set_document_paragraphs([])
@@ -106,11 +111,13 @@ class PreviewPane(QFrame):
         page = self.pages[page_number - 1] if self.pages else "<p></p>"
         self.content.setHtml(page)
         self._apply_text_color()
+        self._refresh_monochrome_overlay()
 
     def set_text_color(self, color: QColor | None) -> None:
         """Override all text colors, or clear the override with ``None``."""
         self.text_color = QColor(color) if color is not None else None
         self._apply_text_color()
+        self._refresh_monochrome_overlay()
 
     def _apply_text_color(self) -> None:
         if self.text_color is None:
@@ -128,7 +135,28 @@ class PreviewPane(QFrame):
         self.page.setStyleSheet(
             f"QFrame#a4Page {{ background-color: {page_color}; border: 1px solid #c9ced8; }}"
         )
+        self._refresh_monochrome_overlay()
+
+    def _refresh_monochrome_overlay(self) -> None:
+        """Render a grayscale display overlay without changing document colors."""
+        if not self.monochrome:
+            self._monochrome_overlay.hide()
+            return
+
+        self._monochrome_overlay.hide()
+        image = QImage(self.page.size(), QImage.Format.Format_ARGB32)
+        image.fill(Qt.GlobalColor.white)
+        painter = QPainter(image)
+        self.page.render(painter, QPoint())
+        painter.end()
+        grayscale = image.convertToFormat(QImage.Format.Format_Grayscale8)
+        display_image = grayscale.convertToFormat(QImage.Format.Format_RGB32)
+        self._monochrome_overlay.setGeometry(self.page.rect())
+        self._monochrome_overlay.setPixmap(QPixmap.fromImage(display_image))
+        self._monochrome_overlay.show()
+        self._monochrome_overlay.raise_()
 
     def set_monochrome(self, enabled: bool) -> None:
         """Switch the preview's monochrome state."""
         self.monochrome = enabled
+        self._refresh_monochrome_overlay()

@@ -37,7 +37,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("OcrDisturber")
-        self.setFixedSize(1220, 808)
+        self.setFixedSize(1264, 808)
         self._warning_height_with_spacing = 56
         self._warning_is_visible = False
         self.loaded_file_data: bytes | None = None
@@ -264,6 +264,9 @@ class MainWindow(QMainWindow):
             QSlider::handle:horizontal { width: 16px; margin: -6px 0; background: #5877d8; border-radius: 8px; }
             """
         )
+        # The initial grayscale snapshot is first rendered during PreviewPane
+        # construction, before this stylesheet sets the A4 page background.
+        self.monochrome_preview.set_monochrome(True)
 
     @staticmethod
     def _label(text: str) -> QLabel:
