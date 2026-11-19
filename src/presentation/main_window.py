@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.presentation.preview_pane import PreviewPane
+from src.services.equal_luminance_color_generator import EqualLuminanceColorGenerator
 from src.services.word_document_service import WordDocumentService
 
 
@@ -40,6 +41,7 @@ class MainWindow(QMainWindow):
         self.loaded_file_path: Path | None = None
         self.document_paragraphs: list[str] = []
         self.document_service = WordDocumentService()
+        self.equal_luminance_color_generator = EqualLuminanceColorGenerator()
         self.text_color = QColor("#8e001b")
         self.background_color = QColor("#20b34a")
 
@@ -131,9 +133,12 @@ class MainWindow(QMainWindow):
         swatch_row.addLayout(swatch_column, 1)
         color_layout.addLayout(swatch_row)
 
-        self.pair_button = QPushButton("Подобрать пару")
-        self.pair_button.setEnabled(False)
-        color_layout.addWidget(self.pair_button, alignment=Qt.AlignmentFlag.AlignHCenter)
+        self.find_equal_background_button = QPushButton("Найти равнояркий фон")
+        self.find_equal_background_button.clicked.connect(self._find_equal_luminance_background)
+        color_layout.addWidget(self.find_equal_background_button)
+        self.find_equal_text_button = QPushButton("Найти равнояркий текст")
+        self.find_equal_text_button.clicked.connect(self._find_equal_luminance_text)
+        color_layout.addWidget(self.find_equal_text_button)
 
         background_panel = QFrame()
         background_panel.setObjectName("backgroundSettingsPanel")
@@ -272,6 +277,29 @@ class MainWindow(QMainWindow):
             swatch.setStyleSheet(
                 f"background-color: {selected.name()}; border: 1px solid #c9ced8; border-radius: 3px;"
             )
+
+    def _find_equal_luminance_background(self) -> None:
+        """Set the background to a color with the text's grayscale value."""
+        self._set_swatch_color(
+            "background_color",
+            self.background_color_swatch,
+            self.equal_luminance_color_generator.find_equal_luminance_color(self.text_color),
+        )
+
+    def _find_equal_luminance_text(self) -> None:
+        """Set the text to a color with the background's grayscale value."""
+        self._set_swatch_color(
+            "text_color",
+            self.text_color_swatch,
+            self.equal_luminance_color_generator.find_equal_luminance_color(self.background_color),
+        )
+
+    def _set_swatch_color(self, attribute: str, swatch: QPushButton, color: QColor) -> None:
+        """Update a selected color and its visible sample."""
+        setattr(self, attribute, color)
+        swatch.setStyleSheet(
+            f"background-color: {color.name()}; border: 1px solid #c9ced8; border-radius: 3px;"
+        )
 
     def show(self) -> None:
         """Display the main window."""
