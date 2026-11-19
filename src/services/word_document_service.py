@@ -16,7 +16,7 @@ class WordDocumentService:
         path = Path(file_path)
         data = path.read_bytes()
         if path.suffix.lower() != ".docx":
-            return data, ["<p>Для форматированного предпросмотра откройте документ в формате DOCX.</p>"]
+            raise ValueError("Поддерживается только формат Word .docx.")
 
         try:
             with ZipFile(path) as archive:

@@ -1,7 +1,5 @@
 """Main application window and its controls."""
 
-import shutil
-import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -37,6 +35,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("OcrDisturber")
         self.setFixedSize(1220, 800)
         self.loaded_file_data: bytes | None = None
+        self.loaded_file_path: Path | None = None
         self.document_paragraphs: list[str] = []
         self.document_service = WordDocumentService()
         self.text_color = QColor("#8e001b")
@@ -56,7 +55,7 @@ class MainWindow(QMainWindow):
 
         self.file_path = QLineEdit()
         self.file_path.setReadOnly(True)
-        self.file_path.setPlaceholderText("Выберите файл Word")
+        self.file_path.setPlaceholderText("Выберите документ Word (.docx)")
         self.file_path.setClearButtonEnabled(False)
         self.file_button = QPushButton("Обзор…")
         self.file_button.clicked.connect(self.choose_word_file)
@@ -141,6 +140,7 @@ class MainWindow(QMainWindow):
         background_layout.addWidget(self._label("Максимальный размер фона"))
         background_layout.addWidget(self.background_maximum)
         self.download_button = QPushButton("Скачать файл")
+        self.download_button.setEnabled(False)
         self.download_button.clicked.connect(self.download_file)
 
         page_controls = QWidget()
@@ -251,12 +251,12 @@ class MainWindow(QMainWindow):
         super().show()
 
     def choose_word_file(self) -> None:
-        """Open a file picker filtered to .docx and .doc files."""
+        """Open a file picker filtered to .docx files."""
         file_path, _ = QFileDialog.getOpenFileName(
             self,
-            "Выберите документ Word",
+            "Выберите документ Word (.docx)",
             "",
-            "Документы Word (*.docx *.doc)",
+            "Документы Word (*.docx)",
         )
         if file_path:
             try:
@@ -266,6 +266,7 @@ class MainWindow(QMainWindow):
                 return
             self.file_path.setText(file_path)
             self.loaded_file_data = data
+            self.loaded_file_path = Path(file_path)
             self.document_paragraphs = paragraphs
             self.color_preview.set_document_paragraphs(paragraphs)
             self.monochrome_preview.set_document_paragraphs(paragraphs)
@@ -276,6 +277,7 @@ class MainWindow(QMainWindow):
             self.page_selector.blockSignals(False)
             self._show_preview_page(1)
             self._update_page_navigation(1)
+            self.download_button.setEnabled(True)
 
     def _show_preview_page(self, page_number: int) -> None:
         """Show the selected page in both preview panes."""
@@ -292,14 +294,17 @@ class MainWindow(QMainWindow):
         """Reserved for preview updates when document processing is implemented."""
 
     def download_file(self) -> None:
-        """Confirm the warning and save a copy of the placeholder output."""
+        """Save the loaded DOCX bytes to a user-selected location."""
+        if self.loaded_file_data is None or self.loaded_file_path is None:
+            return
+
         warning = QMessageBox(self)
         warning.setIcon(QMessageBox.Icon.Warning)
         warning.setWindowTitle("Перед скачиванием")
         warning.setText(
             "Созданный файл возможно корректно читать ТОЛЬКО в цветном формате. "
-            "При черно белом фильтре или печати чтение текста будет затруднено "
-            "или невозможно"
+            "При черно-белом фильтре или печати чтение текста будет затруднено "
+            "или невозможно."
         )
         download_button = warning.addButton(
             "Понимаю, скачать", QMessageBox.ButtonRole.AcceptRole
@@ -307,34 +312,35 @@ class MainWindow(QMainWindow):
         cancel_button = warning.addButton("Отмена", QMessageBox.ButtonRole.RejectRole)
         warning.setDefaultButton(cancel_button)
         warning.exec()
-
         if warning.clickedButton() is not download_button:
             return
 
-        default_path = str(Path.home() / "created_file.txt")
+        output_name = f"{self.loaded_file_path.stem}_disturbed.docx"
+        default_path = str(Path.home() / output_name)
         destination, _ = QFileDialog.getSaveFileName(
             self,
-            "Сохранить созданный файл",
+            "Сохранить документ Word",
             default_path,
-            "Текстовые файлы (*.txt)",
+            "Документы Word (*.docx)",
         )
         if not destination:
             return
 
-        source = Path(sys.argv[0]).resolve().parent / "dummy.txt"
+        destination_path = Path(destination)
+        if destination_path.suffix.lower() != ".docx":
+            destination_path = destination_path.with_suffix(".docx")
         try:
-            if source.resolve() != Path(destination).resolve():
-                shutil.copyfile(source, destination)
+            destination_path.write_bytes(self.loaded_file_data)
         except OSError as error:
             QMessageBox.critical(
                 self,
                 "Не удалось сохранить файл",
-                f"Не удалось скопировать файл-заглушку:\n{error}",
+                f"Не удалось сохранить документ:\n{error}",
             )
             return
 
         QMessageBox.information(
             self,
             "Файл сохранён",
-            f"Файл сохранён в:\n{destination}",
+            f"Файл сохранён в:\n{destination_path}",
         )
