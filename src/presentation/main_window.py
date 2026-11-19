@@ -1,15 +1,17 @@
-"""Main application window and its controls."""
+﻿"""Main application window and its controls."""
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (
+    QCheckBox,
     QFileDialog,
     QComboBox,
     QColorDialog,
     QAbstractSpinBox,
     QFrame,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -28,6 +30,78 @@ from src.services.equal_luminance_color_generator import EqualLuminanceColorGene
 from src.services.word_document_service import WordDocumentService
 
 
+class RangeSlider(QWidget):
+    """Two-handle slider that always keeps its values in ascending order."""
+
+    minimumChanged = Signal(int)
+    maximumChanged = Signal(int)
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.minimum_value = 75
+        self.maximum_value = 125
+        self._active_handle = "minimum"
+        self.setMinimumHeight(26)
+
+    def _x(self, value: int) -> float:
+        return 8 + (value - 50) * max(1, self.width() - 16) / 100
+
+    def _value(self, x: float) -> int:
+        return max(50, min(150, round(50 + (x - 8) * 100 / max(1, self.width() - 16))))
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        center = self.height() / 2
+        left, right = self._x(self.minimum_value), self._x(self.maximum_value)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#d9dde4"))
+        painter.drawRoundedRect(8, int(center - 2), self.width() - 16, 5, 2, 2)
+        painter.setPen(QPen(QColor("#8b929e"), 1))
+        for tick in range(11):
+            x = 8 + tick * max(1, self.width() - 16) / 10
+            painter.drawLine(int(x), int(center + 4), int(x), int(center + 9))
+        for tick in range(10):
+            x = 8 + (tick + 0.5) * max(1, self.width() - 16) / 10
+            painter.drawLine(int(x), int(center + 4), int(x), int(center + 7))
+        painter.setBrush(QColor("#5877d8"))
+        painter.drawRoundedRect(int(left), int(center - 2), max(1, int(right - left)), 5, 2, 2)
+        painter.drawEllipse(int(left - 8), int(center - 8), 16, 16)
+        painter.drawEllipse(int(right - 8), int(center - 8), 16, 16)
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+        x = event.position().x()
+        self._active_handle = "minimum" if abs(x - self._x(self.minimum_value)) <= abs(x - self._x(self.maximum_value)) else "maximum"
+        self._move_handle(x)
+
+    def mouseMoveEvent(self, event) -> None:
+        if event.buttons() & Qt.MouseButton.LeftButton:
+            self._move_handle(event.position().x())
+
+    def _move_handle(self, x: float) -> None:
+        value = self._value(x)
+        if self._active_handle == "minimum":
+            if value <= self.maximum_value:
+                self.minimum_value = value
+                self.minimumChanged.emit(value)
+            else:
+                self.minimum_value, self.maximum_value = self.maximum_value, value
+                self._active_handle = "maximum"
+                self.minimumChanged.emit(self.minimum_value)
+                self.maximumChanged.emit(self.maximum_value)
+        elif value >= self.minimum_value:
+            self.maximum_value = value
+            self.maximumChanged.emit(value)
+        else:
+            self.minimum_value, self.maximum_value = value, self.minimum_value
+            self._active_handle = "minimum"
+            self.minimumChanged.emit(self.minimum_value)
+            self.maximumChanged.emit(self.maximum_value)
+        self.update()
+
+
 class MainWindow(QMainWindow):
     """Main form for document selection, appearance settings and previews."""
 
@@ -37,7 +111,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("OcrDisturber")
-        self.setFixedSize(1264, 808)
+        self.setFixedSize(1450, 894)
         self._warning_height_with_spacing = 56
         self._warning_is_visible = False
         self.loaded_file_data: bytes | None = None
@@ -86,6 +160,7 @@ class MainWindow(QMainWindow):
         self.file_path = QLineEdit()
         self.file_path.setReadOnly(True)
         self.file_path.setPlaceholderText("Выберите документ Word (.docx)")
+        self.file_path.setStyleSheet("font-weight: bold;")
         self.file_path.setClearButtonEnabled(False)
         self.file_button = QPushButton("Обзор…")
         self.file_button.clicked.connect(self.choose_word_file)
@@ -159,23 +234,43 @@ class MainWindow(QMainWindow):
         background_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         background_layout.addWidget(background_title)
 
-        background_layout.addWidget(self._label("Тип фона"))
-        self.background_types = QComboBox()
-        self.background_types.setPlaceholderText(" ")
-        background_layout.addWidget(self.background_types)
+        background_types_frame = QGroupBox("Заполнение")
+        background_types_frame.setObjectName("backgroundTypesFrame")
+        background_types_layout = QVBoxLayout(background_types_frame)
+        background_types_layout.setContentsMargins(12, 12, 12, 12)
+        background_types_layout.setSpacing(8)
 
-        self.background_minimum = QSlider(Qt.Orientation.Horizontal)
-        self.background_minimum.setRange(1, 100)
-        self.background_minimum.setValue(25)
-        background_layout.addWidget(self._label("Минимальный размер фона"))
-        background_layout.addWidget(self.background_minimum)
+        self.background_type_selectors: dict[str, QCheckBox] = {}
+        for key, title in (
+            ("punctuation", "Знаки препинания"),
+            ("shapes", "Геометрические фигуры"),
+            ("pepper", "Перец"),
+        ):
+            selector = QCheckBox(title)
+            background_types_layout.addWidget(selector)
+            self.background_type_selectors[key] = selector
+        background_layout.addWidget(background_types_frame)
 
-        self.background_maximum = QSlider(Qt.Orientation.Horizontal)
-        self.background_maximum.setRange(1, 100)
-        self.background_maximum.setValue(75)
-        background_layout.addWidget(self._label("Максимальный размер фона"))
-        background_layout.addWidget(self.background_maximum)
+        self.background_range = RangeSlider()
+        self.background_minimum = self.background_range
+        self.background_maximum = self.background_range
+        background_layout.addWidget(self._label("Размер фона. Коэффициенты к размеру текста"))
+        background_layout.addWidget(self.background_range)
+        scale_labels = QHBoxLayout()
+        for value in ("0.5", "0.75", "1", "1.25", "1.5"):
+            scale_labels.addWidget(QLabel(value), alignment=Qt.AlignmentFlag.AlignHCenter)
+            if value != "1.5":
+                scale_labels.addStretch(1)
+        background_layout.addLayout(scale_labels)
+        background_layout.addWidget(self._label("Степень заполнения фона"))
+        self.background_fill_slider = QSlider(Qt.Orientation.Horizontal)
+        self.background_fill_slider.setRange(0, 100)
+        self.background_fill_slider.setValue(50)
+        self.background_fill_slider.setTickPosition(QSlider.TickPosition.NoTicks)
+        background_layout.addWidget(self.background_fill_slider)
         self.download_button = QPushButton("Скачать файл")
+        self.download_button.setObjectName("downloadButton")
+        self.download_button.setFixedHeight(48)
         self.download_button.setEnabled(False)
         self.download_button.clicked.connect(self.download_file)
 
@@ -184,7 +279,7 @@ class MainWindow(QMainWindow):
 
         page_controls = QWidget()
         page_controls_layout = QVBoxLayout(page_controls)
-        page_controls_layout.setContentsMargins(0, 0, 0, 0)
+        page_controls_layout.setContentsMargins(0, 6, 0, 0)
         page_controls_layout.setSpacing(4)
         page_label = QLabel("Страница предпросмотра")
         page_label.setObjectName("fieldLabel")
@@ -220,8 +315,8 @@ class MainWindow(QMainWindow):
         right_controls.addWidget(background_panel)
         right_controls.addWidget(self.apply_settings_button)
         right_controls.addWidget(page_controls)
+        right_controls.addStretch(1)
         right_controls.addWidget(self.download_button)
-        right_controls.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         work_area = QHBoxLayout()
         work_area.setSpacing(18)
@@ -237,7 +332,23 @@ class MainWindow(QMainWindow):
                 border: 1px solid #d9dde4;
                 border-radius: 14px;
             }
+            #backgroundTypesFrame {
+                background: transparent;
+                border: 1px solid #d9dde4;
+                border-radius: 10px;
+                margin-top: 8px;
+                padding-top: 6px;
+            }
+            QGroupBox#backgroundTypesFrame::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                left: 12px;
+                padding: 0 6px;
+                background: #ffffff;
+                color: #424955;
+            }
             QLabel#fieldLabel { color: #424955; font-size: 12px; }
+            QLabel#fieldLabel, QCheckBox { background: transparent; }
             QLineEdit, QComboBox {
                 background: #ffffff;
                 border: 1px solid #c9ced8;
@@ -254,14 +365,19 @@ class MainWindow(QMainWindow):
                 padding: 9px 16px;
             }
             QPushButton:hover { background: #dfe6f7; }
-            QLabel#previewTitle, QLabel#panelTitle { color: #646c79; font-size: 13px; }
+            QPushButton#downloadButton { background: #c7d2ee; }
+            QPushButton#downloadButton:hover { background: #b4c3e8; }
+            QLabel#previewTitle, QLabel#panelTitle {
+                background: transparent;
+                color: #646c79;
+                font-size: 13px;
+                font-weight: bold;
+            }
             #previewWarningBanner { background: #fff2c6; border: 1px solid #e5c75b; border-radius: 8px; }
             QLabel#previewWarningText { background: transparent; color: #554617; font-size: 12px; }
             QPushButton#previewWarningClose { background: transparent; border: 0; padding: 0px 0px 3px 0px; font-size: 18px; text-align: center; color: #554617; }
             QPushButton#previewWarningClose:hover { background: #f3df9b; border-radius: 4px; }
             #a4Page { background: #ffffff; border: 1px solid #c9ced8; }
-            QSlider::groove:horizontal { height: 5px; background: #d9dde4; border-radius: 2px; }
-            QSlider::handle:horizontal { width: 16px; margin: -6px 0; background: #5877d8; border-radius: 8px; }
             """
         )
         # The initial grayscale snapshot is first rendered during PreviewPane

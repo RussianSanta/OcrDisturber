@@ -21,6 +21,7 @@ class PreviewPane(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 4, 0, 12)
         layout.setSpacing(4)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         self.title_label = QLabel(title)
         self.title_label.setObjectName("previewTitle")
@@ -31,7 +32,7 @@ class PreviewPane(QFrame):
 
         self.page = QFrame()
         self.page.setObjectName("a4Page")
-        self.page.setFixedSize(438, 620)
+        self.page.setFixedSize(500, 707)
         page_layout = QVBoxLayout(self.page)
         page_layout.setContentsMargins(20, 20, 20, 20)
         self.content = QTextEdit()
