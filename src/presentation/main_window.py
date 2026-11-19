@@ -24,24 +24,31 @@ from PySide6.QtWidgets import (
 )
 
 from src.presentation.preview_pane import PreviewPane
+from src.services.equal_luminance_color_generator import EqualLuminanceColorGenerator
 from src.services.word_document_service import WordDocumentService
 
 
 class MainWindow(QMainWindow):
     """Main form for document selection, appearance settings and previews."""
 
+    RECOMMENDED_TEXT_COLOR = "#515100"
+    RECOMMENDED_BACKGROUND_COLOR = "#8f00ff"
+
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("OcrDisturber")
-        self.setFixedSize(1220, 808)
+        self.setFixedSize(1264, 808)
         self._warning_height_with_spacing = 56
         self._warning_is_visible = False
         self.loaded_file_data: bytes | None = None
         self.loaded_file_path: Path | None = None
         self.document_paragraphs: list[str] = []
         self.document_service = WordDocumentService()
-        self.text_color = QColor("#8e001b")
-        self.background_color = QColor("#20b34a")
+        self.equal_luminance_color_generator = EqualLuminanceColorGenerator()
+        # Same Rec. 601 grayscale value, with a dark text color and a vivid,
+        # clearly different background hue.
+        self.text_color = QColor(self.RECOMMENDED_TEXT_COLOR)
+        self.background_color = QColor(self.RECOMMENDED_BACKGROUND_COLOR)
 
         content = QWidget(self)
         self.setCentralWidget(content)
@@ -131,9 +138,15 @@ class MainWindow(QMainWindow):
         swatch_row.addLayout(swatch_column, 1)
         color_layout.addLayout(swatch_row)
 
-        self.pair_button = QPushButton("Подобрать пару")
-        self.pair_button.setEnabled(False)
-        color_layout.addWidget(self.pair_button, alignment=Qt.AlignmentFlag.AlignHCenter)
+        self.find_equal_background_button = QPushButton("Найти равнояркий фон")
+        self.find_equal_background_button.clicked.connect(self._find_equal_luminance_background)
+        color_layout.addWidget(self.find_equal_background_button)
+        self.find_equal_text_button = QPushButton("Найти равнояркий текст")
+        self.find_equal_text_button.clicked.connect(self._find_equal_luminance_text)
+        color_layout.addWidget(self.find_equal_text_button)
+        self.recommended_colors_button = QPushButton("Вернуться к рекомендованным")
+        self.recommended_colors_button.clicked.connect(self._restore_recommended_colors)
+        color_layout.addWidget(self.recommended_colors_button)
 
         background_panel = QFrame()
         background_panel.setObjectName("backgroundSettingsPanel")
@@ -165,6 +178,9 @@ class MainWindow(QMainWindow):
         self.download_button = QPushButton("Скачать файл")
         self.download_button.setEnabled(False)
         self.download_button.clicked.connect(self.download_file)
+
+        self.apply_settings_button = QPushButton("Применить настройки")
+        self.apply_settings_button.clicked.connect(self.apply_settings_to_preview)
 
         page_controls = QWidget()
         page_controls_layout = QVBoxLayout(page_controls)
@@ -202,6 +218,7 @@ class MainWindow(QMainWindow):
         right_controls.setSpacing(12)
         right_controls.addWidget(self.color_settings_panel)
         right_controls.addWidget(background_panel)
+        right_controls.addWidget(self.apply_settings_button)
         right_controls.addWidget(page_controls)
         right_controls.addWidget(self.download_button)
         right_controls.setAlignment(Qt.AlignmentFlag.AlignTop)
@@ -247,6 +264,9 @@ class MainWindow(QMainWindow):
             QSlider::handle:horizontal { width: 16px; margin: -6px 0; background: #5877d8; border-radius: 8px; }
             """
         )
+        # The initial grayscale snapshot is first rendered during PreviewPane
+        # construction, before this stylesheet sets the A4 page background.
+        self.monochrome_preview.set_monochrome(True)
 
     @staticmethod
     def _label(text: str) -> QLabel:
@@ -273,6 +293,40 @@ class MainWindow(QMainWindow):
                 f"background-color: {selected.name()}; border: 1px solid #c9ced8; border-radius: 3px;"
             )
 
+    def _find_equal_luminance_background(self) -> None:
+        """Set the background to a color with the text's grayscale value."""
+        self._set_swatch_color(
+            "background_color",
+            self.background_color_swatch,
+            self.equal_luminance_color_generator.find_equal_luminance_color(self.text_color),
+        )
+
+    def _find_equal_luminance_text(self) -> None:
+        """Set the text to a color with the background's grayscale value."""
+        self._set_swatch_color(
+            "text_color",
+            self.text_color_swatch,
+            self.equal_luminance_color_generator.find_equal_luminance_color(self.background_color),
+        )
+
+    def _restore_recommended_colors(self) -> None:
+        """Restore the recommended text and background colors in settings."""
+        self._set_swatch_color(
+            "text_color", self.text_color_swatch, QColor(self.RECOMMENDED_TEXT_COLOR)
+        )
+        self._set_swatch_color(
+            "background_color",
+            self.background_color_swatch,
+            QColor(self.RECOMMENDED_BACKGROUND_COLOR),
+        )
+
+    def _set_swatch_color(self, attribute: str, swatch: QPushButton, color: QColor) -> None:
+        """Update a selected color and its visible sample."""
+        setattr(self, attribute, color)
+        swatch.setStyleSheet(
+            f"background-color: {color.name()}; border: 1px solid #c9ced8; border-radius: 3px;"
+        )
+
     def show(self) -> None:
         """Display the main window."""
         super().show()
@@ -295,6 +349,10 @@ class MainWindow(QMainWindow):
             self.loaded_file_data = data
             self.loaded_file_path = Path(file_path)
             self.document_paragraphs = paragraphs
+            self.color_preview.set_text_color(None)
+            self.monochrome_preview.set_text_color(None)
+            self.color_preview.set_background_color(None)
+            self.monochrome_preview.set_background_color(None)
             self.color_preview.set_document_paragraphs(paragraphs)
             self.monochrome_preview.set_document_paragraphs(paragraphs)
             page_count = max(self.color_preview.page_count, self.monochrome_preview.page_count, 1)
@@ -337,6 +395,13 @@ class MainWindow(QMainWindow):
     def update_previews(self) -> None:
         """Reserved for preview updates when document processing is implemented."""
 
+    def apply_settings_to_preview(self) -> None:
+        """Apply the selected text color to both document previews."""
+        self.color_preview.set_text_color(self.text_color)
+        self.monochrome_preview.set_text_color(self.text_color)
+        self.color_preview.set_background_color(self.background_color)
+        self.monochrome_preview.set_background_color(self.background_color)
+
     def download_file(self) -> None:
         """Save the loaded DOCX bytes to a user-selected location."""
         if self.loaded_file_data is None or self.loaded_file_path is None:
@@ -374,8 +439,11 @@ class MainWindow(QMainWindow):
         if destination_path.suffix.lower() != ".docx":
             destination_path = destination_path.with_suffix(".docx")
         try:
-            destination_path.write_bytes(self.loaded_file_data)
-        except OSError as error:
+            processed_data = self.document_service.apply_appearance(
+                self.loaded_file_data, self.text_color.name(), self.background_color.name()
+            )
+            destination_path.write_bytes(processed_data)
+        except (OSError, ValueError) as error:
             QMessageBox.critical(
                 self,
                 "Не удалось сохранить файл",
