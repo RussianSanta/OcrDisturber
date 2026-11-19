@@ -1,0 +1,13 @@
+# Python virtual environment
+.venv/
+
+# Python bytecode and cache directories
+__pycache__/
+*.py[cod]
+
+# Build output
+build/
+dist/
+
+# PyCharm project settings
+.idea/
