@@ -34,6 +34,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("OcrDisturber")
         self.setFixedSize(1220, 808)
+        self._warning_height_with_spacing = 56
+        self._warning_is_visible = False
         self.loaded_file_data: bytes | None = None
         self.loaded_file_path: Path | None = None
         self.document_paragraphs: list[str] = []
@@ -46,6 +48,27 @@ class MainWindow(QMainWindow):
         root = QVBoxLayout(content)
         root.setContentsMargins(26, 26, 26, 26)
         root.setSpacing(16)
+
+        self.preview_warning = QFrame()
+        self.preview_warning.setObjectName("previewWarningBanner")
+        self.preview_warning.setFixedHeight(40)
+        warning_layout = QHBoxLayout(self.preview_warning)
+        warning_layout.setContentsMargins(12, 2, 6, 2)
+        warning_layout.setSpacing(8)
+        warning_text = QLabel(
+            "Таблицы, формулы, изображения и прочие специальные символы и рисунки "
+            "в предпросмотре могут отображаться некорректно"
+        )
+        warning_text.setObjectName("previewWarningText")
+        warning_layout.addWidget(warning_text, 1)
+        warning_close = QPushButton("×")
+        warning_close.setObjectName("previewWarningClose")
+        warning_close.setFixedSize(28, 28)
+        warning_close.setToolTip("Скрыть предупреждение")
+        warning_close.clicked.connect(self._dismiss_preview_warning)
+        warning_layout.addWidget(warning_close)
+        self.preview_warning.hide()
+        root.addWidget(self.preview_warning)
 
         file_panel = QFrame()
         file_panel.setObjectName("filePanel")
@@ -215,6 +238,10 @@ class MainWindow(QMainWindow):
             }
             QPushButton:hover { background: #dfe6f7; }
             QLabel#previewTitle, QLabel#panelTitle { color: #646c79; font-size: 13px; }
+            #previewWarningBanner { background: #fff2c6; border: 1px solid #e5c75b; border-radius: 8px; }
+            QLabel#previewWarningText { background: transparent; color: #554617; font-size: 12px; }
+            QPushButton#previewWarningClose { background: transparent; border: 0; padding: 0px 0px 3px 0px; font-size: 18px; text-align: center; color: #554617; }
+            QPushButton#previewWarningClose:hover { background: #f3df9b; border-radius: 4px; }
             #a4Page { background: #ffffff; border: 1px solid #c9ced8; }
             QSlider::groove:horizontal { height: 5px; background: #d9dde4; border-radius: 2px; }
             QSlider::handle:horizontal { width: 16px; margin: -6px 0; background: #5877d8; border-radius: 8px; }
@@ -278,6 +305,23 @@ class MainWindow(QMainWindow):
             self._show_preview_page(1)
             self._update_page_navigation(1)
             self.download_button.setEnabled(True)
+            self._show_preview_warning()
+
+    def _show_preview_warning(self) -> None:
+        """Show the preview caveat and preserve the preview page size."""
+        if self._warning_is_visible:
+            return
+        self._warning_is_visible = True
+        self.preview_warning.show()
+        self.setFixedSize(self.width(), self.height() + self._warning_height_with_spacing)
+
+    def _dismiss_preview_warning(self) -> None:
+        """Hide the preview caveat and restore the compact window height."""
+        if not self._warning_is_visible:
+            return
+        self._warning_is_visible = False
+        self.preview_warning.hide()
+        self.setFixedSize(self.width(), self.height() - self._warning_height_with_spacing)
 
     def _show_preview_page(self, page_number: int) -> None:
         """Show the selected page in both preview panes."""
