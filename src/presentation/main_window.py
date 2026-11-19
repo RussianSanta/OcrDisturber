@@ -1,5 +1,10 @@
 """Main application window and its controls."""
 
+import shutil
+import sys
+from pathlib import Path
+
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFileDialog,
     QComboBox,
@@ -8,6 +13,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -70,6 +76,11 @@ class MainWindow(QMainWindow):
         preview_row.addWidget(self.color_preview)
         preview_row.addWidget(self.monochrome_preview)
         root.addLayout(preview_row, 1)
+
+        self.download_button = QPushButton("Скачать файл")
+        self.download_button.setMinimumWidth(190)
+        self.download_button.clicked.connect(self.download_file)
+        root.addWidget(self.download_button, alignment=Qt.AlignmentFlag.AlignHCenter)
 
         self.setStyleSheet(
             """
@@ -137,3 +148,51 @@ class MainWindow(QMainWindow):
 
     def update_previews(self) -> None:
         """Reserved for preview updates when document processing is implemented."""
+
+    def download_file(self) -> None:
+        """Confirm the warning and save a copy of the placeholder output."""
+        warning = QMessageBox(self)
+        warning.setIcon(QMessageBox.Icon.Warning)
+        warning.setWindowTitle("Перед скачиванием")
+        warning.setText(
+            "Созданный файл возможно корректно читать ТОЛЬКО в цветном формате. "
+            "При черно белом фильтре или печати чтение текста будет затруднено "
+            "или невозможно"
+        )
+        download_button = warning.addButton(
+            "Понимаю, скачать", QMessageBox.ButtonRole.AcceptRole
+        )
+        cancel_button = warning.addButton("Отмена", QMessageBox.ButtonRole.RejectRole)
+        warning.setDefaultButton(cancel_button)
+        warning.exec()
+
+        if warning.clickedButton() is not download_button:
+            return
+
+        default_path = str(Path.home() / "created_file.txt")
+        destination, _ = QFileDialog.getSaveFileName(
+            self,
+            "Сохранить созданный файл",
+            default_path,
+            "Текстовые файлы (*.txt)",
+        )
+        if not destination:
+            return
+
+        source = Path(sys.argv[0]).resolve().parent / "dummy.txt"
+        try:
+            if source.resolve() != Path(destination).resolve():
+                shutil.copyfile(source, destination)
+        except OSError as error:
+            QMessageBox.critical(
+                self,
+                "Не удалось сохранить файл",
+                f"Не удалось скопировать файл-заглушку:\n{error}",
+            )
+            return
+
+        QMessageBox.information(
+            self,
+            "Файл сохранён",
+            f"Файл сохранён в:\n{destination}",
+        )
