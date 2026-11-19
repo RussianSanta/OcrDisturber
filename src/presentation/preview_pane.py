@@ -13,7 +13,8 @@ class PreviewPane(QFrame):
     def __init__(self, title: str = "Предпросмотр", monochrome: bool = False) -> None:
         super().__init__()
         self.monochrome = monochrome
-        self.text_color = QColor("#252a32")
+        self.text_color: QColor | None = None
+        self.background_color: QColor | None = None
         self.setObjectName("previewPanel")
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
@@ -106,17 +107,27 @@ class PreviewPane(QFrame):
         self.content.setHtml(page)
         self._apply_text_color()
 
-    def set_text_color(self, color: QColor) -> None:
-        """Set the foreground color for all text on the current and next pages."""
-        self.text_color = QColor(color)
+    def set_text_color(self, color: QColor | None) -> None:
+        """Override all text colors, or clear the override with ``None``."""
+        self.text_color = QColor(color) if color is not None else None
         self._apply_text_color()
 
     def _apply_text_color(self) -> None:
+        if self.text_color is None:
+            return
         cursor = QTextCursor(self.content.document())
         cursor.select(QTextCursor.SelectionType.Document)
         text_format = QTextCharFormat()
         text_format.setForeground(self.text_color)
         cursor.mergeCharFormat(text_format)
+
+    def set_background_color(self, color: QColor | None) -> None:
+        """Set the page background override, or restore the white paper preview."""
+        self.background_color = QColor(color) if color is not None else None
+        page_color = self.background_color.name() if self.background_color is not None else "#ffffff"
+        self.page.setStyleSheet(
+            f"QFrame#a4Page {{ background-color: {page_color}; border: 1px solid #c9ced8; }}"
+        )
 
     def set_monochrome(self, enabled: bool) -> None:
         """Switch the preview's monochrome state."""

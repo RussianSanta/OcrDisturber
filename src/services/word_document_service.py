@@ -48,12 +48,13 @@ class WordDocumentService:
         blocks = self._render_blocks(body)
         return data, blocks or ["<p></p>"]
 
-    def apply_text_color(self, document_data: bytes, color: str) -> bytes:
-        """Return a DOCX copy with the requested color applied to every run."""
-        if len(color) != 7 or color[0] != "#" or any(
-            character not in "0123456789abcdefABCDEF" for character in color[1:]
-        ):
-            raise ValueError("color must be a #RRGGBB value")
+    def apply_appearance(self, document_data: bytes, text_color: str, background_color: str) -> bytes:
+        """Return a DOCX copy with text and whole-page background colors applied."""
+        for color in (text_color, background_color):
+            if len(color) != 7 or color[0] != "#" or any(
+                character not in "0123456789abcdefABCDEF" for character in color[1:]
+            ):
+                raise ValueError("colors must use the #RRGGBB format")
 
         namespace = f"{{{self._WORD_NS_URI}}}"
         with ZipFile(BytesIO(document_data)) as source_archive:
@@ -86,6 +87,16 @@ class WordDocumentService:
                 run_count += 1
             if run_count == 0:
                 raise ValueError("DOCX contains no text runs to color")
+
+            background = root.find(f"{namespace}background")
+            if background is None:
+                background = ElementTree.Element(f"{namespace}background")
+            for existing in root.findall(f"{namespace}background"):
+                root.remove(existing)
+            background.set(f"{namespace}color", background_color[1:].upper())
+            for attribute in ("themeColor", "themeTint", "themeShade"):
+                background.attrib.pop(f"{namespace}{attribute}", None)
+            root.insert(0, background)
 
             updated_xml = ElementTree.tostring(root, encoding="utf-8", xml_declaration=True)
             updated_xml = self._preserve_namespace_declarations(updated_xml, namespace_declarations)

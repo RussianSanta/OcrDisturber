@@ -31,6 +31,9 @@ from src.services.word_document_service import WordDocumentService
 class MainWindow(QMainWindow):
     """Main form for document selection, appearance settings and previews."""
 
+    RECOMMENDED_TEXT_COLOR = "#515100"
+    RECOMMENDED_BACKGROUND_COLOR = "#8f00ff"
+
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("OcrDisturber")
@@ -42,8 +45,10 @@ class MainWindow(QMainWindow):
         self.document_paragraphs: list[str] = []
         self.document_service = WordDocumentService()
         self.equal_luminance_color_generator = EqualLuminanceColorGenerator()
-        self.text_color = QColor("#8e001b")
-        self.background_color = QColor("#20b34a")
+        # Same Rec. 601 grayscale value, with a dark text color and a vivid,
+        # clearly different background hue.
+        self.text_color = QColor(self.RECOMMENDED_TEXT_COLOR)
+        self.background_color = QColor(self.RECOMMENDED_BACKGROUND_COLOR)
 
         content = QWidget(self)
         self.setCentralWidget(content)
@@ -139,6 +144,9 @@ class MainWindow(QMainWindow):
         self.find_equal_text_button = QPushButton("Найти равнояркий текст")
         self.find_equal_text_button.clicked.connect(self._find_equal_luminance_text)
         color_layout.addWidget(self.find_equal_text_button)
+        self.recommended_colors_button = QPushButton("Вернуться к рекомендованным")
+        self.recommended_colors_button.clicked.connect(self._restore_recommended_colors)
+        color_layout.addWidget(self.recommended_colors_button)
 
         background_panel = QFrame()
         background_panel.setObjectName("backgroundSettingsPanel")
@@ -298,6 +306,17 @@ class MainWindow(QMainWindow):
             self.equal_luminance_color_generator.find_equal_luminance_color(self.background_color),
         )
 
+    def _restore_recommended_colors(self) -> None:
+        """Restore the recommended text and background colors in settings."""
+        self._set_swatch_color(
+            "text_color", self.text_color_swatch, QColor(self.RECOMMENDED_TEXT_COLOR)
+        )
+        self._set_swatch_color(
+            "background_color",
+            self.background_color_swatch,
+            QColor(self.RECOMMENDED_BACKGROUND_COLOR),
+        )
+
     def _set_swatch_color(self, attribute: str, swatch: QPushButton, color: QColor) -> None:
         """Update a selected color and its visible sample."""
         setattr(self, attribute, color)
@@ -327,6 +346,10 @@ class MainWindow(QMainWindow):
             self.loaded_file_data = data
             self.loaded_file_path = Path(file_path)
             self.document_paragraphs = paragraphs
+            self.color_preview.set_text_color(None)
+            self.monochrome_preview.set_text_color(None)
+            self.color_preview.set_background_color(None)
+            self.monochrome_preview.set_background_color(None)
             self.color_preview.set_document_paragraphs(paragraphs)
             self.monochrome_preview.set_document_paragraphs(paragraphs)
             page_count = max(self.color_preview.page_count, self.monochrome_preview.page_count, 1)
@@ -373,6 +396,8 @@ class MainWindow(QMainWindow):
         """Apply the selected text color to both document previews."""
         self.color_preview.set_text_color(self.text_color)
         self.monochrome_preview.set_text_color(self.text_color)
+        self.color_preview.set_background_color(self.background_color)
+        self.monochrome_preview.set_background_color(self.background_color)
 
     def download_file(self) -> None:
         """Save the loaded DOCX bytes to a user-selected location."""
@@ -411,8 +436,8 @@ class MainWindow(QMainWindow):
         if destination_path.suffix.lower() != ".docx":
             destination_path = destination_path.with_suffix(".docx")
         try:
-            processed_data = self.document_service.apply_text_color(
-                self.loaded_file_data, self.text_color.name()
+            processed_data = self.document_service.apply_appearance(
+                self.loaded_file_data, self.text_color.name(), self.background_color.name()
             )
             destination_path.write_bytes(processed_data)
         except (OSError, ValueError) as error:
