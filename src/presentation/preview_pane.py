@@ -3,7 +3,7 @@
 from html import escape
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QTextDocument
+from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor, QTextDocument
 from PySide6.QtWidgets import QFrame, QLabel, QSizePolicy, QTextEdit, QVBoxLayout
 
 
@@ -13,6 +13,7 @@ class PreviewPane(QFrame):
     def __init__(self, title: str = "Предпросмотр", monochrome: bool = False) -> None:
         super().__init__()
         self.monochrome = monochrome
+        self.text_color = QColor("#252a32")
         self.setObjectName("previewPanel")
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
@@ -103,6 +104,19 @@ class PreviewPane(QFrame):
         """Display the requested one-based page number."""
         page = self.pages[page_number - 1] if self.pages else "<p></p>"
         self.content.setHtml(page)
+        self._apply_text_color()
+
+    def set_text_color(self, color: QColor) -> None:
+        """Set the foreground color for all text on the current and next pages."""
+        self.text_color = QColor(color)
+        self._apply_text_color()
+
+    def _apply_text_color(self) -> None:
+        cursor = QTextCursor(self.content.document())
+        cursor.select(QTextCursor.SelectionType.Document)
+        text_format = QTextCharFormat()
+        text_format.setForeground(self.text_color)
+        cursor.mergeCharFormat(text_format)
 
     def set_monochrome(self, enabled: bool) -> None:
         """Switch the preview's monochrome state."""

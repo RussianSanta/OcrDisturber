@@ -1,8 +1,10 @@
 """Read DOCX content and build a preview-only HTML representation."""
 
 from html import escape
+from io import BytesIO
 from pathlib import Path
 import re
+from xml.sax.saxutils import quoteattr
 from zipfile import BadZipFile, ZipFile
 from xml.etree import ElementTree
 
@@ -13,6 +15,7 @@ class WordDocumentService:
     _WORD_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
     _TWIPS_PER_PIXEL = 15
     _DEFAULT_PAGE_CONTENT_TWIPS = 9360
+    _WORD_NS_URI = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
     _LATEX_PATTERN = re.compile(
         r"\$\$.*?\$\$|\\\[.*?\\\]|\\\(.*?\\\)|"
         r"\\begin\{(?:equation|align|gather)\*?\}.*?\\end\{(?:equation|align|gather)\*?\}|"
@@ -44,6 +47,80 @@ class WordDocumentService:
         self._page_content_width_twips = self._page_content_width(body)
         blocks = self._render_blocks(body)
         return data, blocks or ["<p></p>"]
+
+    def apply_text_color(self, document_data: bytes, color: str) -> bytes:
+        """Return a DOCX copy with the requested color applied to every run."""
+        if len(color) != 7 or color[0] != "#" or any(
+            character not in "0123456789abcdefABCDEF" for character in color[1:]
+        ):
+            raise ValueError("color must be a #RRGGBB value")
+
+        namespace = f"{{{self._WORD_NS_URI}}}"
+        with ZipFile(BytesIO(document_data)) as source_archive:
+            try:
+                document_xml = source_archive.read("word/document.xml")
+            except KeyError as error:
+                raise ValueError("DOCX document.xml is missing") from error
+            try:
+                root = ElementTree.fromstring(document_xml)
+            except ElementTree.ParseError as error:
+                raise ValueError("DOCX document.xml is not valid XML") from error
+            namespace_declarations = {
+                prefix: uri
+                for _, (prefix, uri) in ElementTree.iterparse(
+                    BytesIO(document_xml), events=("start-ns",)
+                )
+            }
+            run_count = 0
+            for run in root.iter(f"{namespace}r"):
+                properties = run.find(f"{namespace}rPr")
+                if properties is None:
+                    properties = ElementTree.Element(f"{namespace}rPr")
+                    run.insert(0, properties)
+                color_element = properties.find(f"{namespace}color")
+                if color_element is None:
+                    color_element = ElementTree.SubElement(properties, f"{namespace}color")
+                color_element.set(f"{namespace}val", color[1:].upper())
+                for attribute in ("themeColor", "themeTint", "themeShade"):
+                    color_element.attrib.pop(f"{namespace}{attribute}", None)
+                run_count += 1
+            if run_count == 0:
+                raise ValueError("DOCX contains no text runs to color")
+
+            updated_xml = ElementTree.tostring(root, encoding="utf-8", xml_declaration=True)
+            updated_xml = self._preserve_namespace_declarations(updated_xml, namespace_declarations)
+            output = BytesIO()
+            with ZipFile(output, "w") as result_archive:
+                for item in source_archive.infolist():
+                    contents = updated_xml if item.filename == "word/document.xml" else source_archive.read(item.filename)
+                    result_archive.writestr(item, contents)
+        return output.getvalue()
+
+    @staticmethod
+    def _preserve_namespace_declarations(xml_data: bytes, declarations: dict[str, str]) -> bytes:
+        """Restore namespace aliases that ElementTree omits when they appear only in attribute values.
+
+        OOXML uses values such as ``mc:Ignorable="w14 wp14"`` where the listed
+        prefixes must remain declared even when no element uses those namespaces.
+        ElementTree drops such unused declarations during serialization.
+        """
+        root_tag = re.search(rb"<(?![?!])[^>]+>", xml_data)
+        if root_tag is None:
+            raise ValueError("Serialized DOCX document has no root element")
+
+        opening_tag = root_tag.group(0)
+        missing: list[str] = []
+        for prefix, uri in declarations.items():
+            attribute = b"xmlns" if not prefix else b"xmlns:" + prefix.encode("utf-8")
+            if re.search(rb"(?:^|\s)" + re.escape(attribute) + rb"\s*=", opening_tag):
+                continue
+            missing.append(f" {attribute.decode('utf-8')}={quoteattr(uri)}")
+
+        if not missing:
+            return xml_data
+        insertion = "".join(missing).encode("utf-8")
+        updated_tag = opening_tag[:-1] + insertion + b">"
+        return xml_data[:root_tag.start()] + updated_tag + xml_data[root_tag.end():]
 
     def _page_content_width(self, body: ElementTree.Element) -> int:
         """Get the page's printable width from its section properties."""

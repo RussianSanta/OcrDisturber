@@ -171,6 +171,9 @@ class MainWindow(QMainWindow):
         self.download_button.setEnabled(False)
         self.download_button.clicked.connect(self.download_file)
 
+        self.apply_settings_button = QPushButton("Применить настройки")
+        self.apply_settings_button.clicked.connect(self.apply_settings_to_preview)
+
         page_controls = QWidget()
         page_controls_layout = QVBoxLayout(page_controls)
         page_controls_layout.setContentsMargins(0, 0, 0, 0)
@@ -207,6 +210,7 @@ class MainWindow(QMainWindow):
         right_controls.setSpacing(12)
         right_controls.addWidget(self.color_settings_panel)
         right_controls.addWidget(background_panel)
+        right_controls.addWidget(self.apply_settings_button)
         right_controls.addWidget(page_controls)
         right_controls.addWidget(self.download_button)
         right_controls.setAlignment(Qt.AlignmentFlag.AlignTop)
@@ -365,6 +369,11 @@ class MainWindow(QMainWindow):
     def update_previews(self) -> None:
         """Reserved for preview updates when document processing is implemented."""
 
+    def apply_settings_to_preview(self) -> None:
+        """Apply the selected text color to both document previews."""
+        self.color_preview.set_text_color(self.text_color)
+        self.monochrome_preview.set_text_color(self.text_color)
+
     def download_file(self) -> None:
         """Save the loaded DOCX bytes to a user-selected location."""
         if self.loaded_file_data is None or self.loaded_file_path is None:
@@ -402,8 +411,11 @@ class MainWindow(QMainWindow):
         if destination_path.suffix.lower() != ".docx":
             destination_path = destination_path.with_suffix(".docx")
         try:
-            destination_path.write_bytes(self.loaded_file_data)
-        except OSError as error:
+            processed_data = self.document_service.apply_text_color(
+                self.loaded_file_data, self.text_color.name()
+            )
+            destination_path.write_bytes(processed_data)
+        except (OSError, ValueError) as error:
             QMessageBox.critical(
                 self,
                 "Не удалось сохранить файл",
