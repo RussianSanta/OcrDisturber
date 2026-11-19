@@ -33,7 +33,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("OcrDisturber")
-        self.setFixedSize(1220, 800)
+        self.setFixedSize(1220, 808)
         self.loaded_file_data: bytes | None = None
         self.loaded_file_path: Path | None = None
         self.document_paragraphs: list[str] = []

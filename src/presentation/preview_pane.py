@@ -17,18 +17,19 @@ class PreviewPane(QFrame):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(8)
+        layout.setContentsMargins(4, 4, 4, 12)
+        layout.setSpacing(4)
 
         self.title_label = QLabel(title)
         self.title_label.setObjectName("previewTitle")
         self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.title_label.setWordWrap(True)
+        self.title_label.setFixedHeight(24)
         layout.addWidget(self.title_label)
 
         self.page = QFrame()
         self.page.setObjectName("a4Page")
-        self.page.setFixedSize(410, 580)
+        self.page.setFixedSize(438, 620)
         page_layout = QVBoxLayout(self.page)
         page_layout.setContentsMargins(20, 20, 20, 20)
         self.content = QTextEdit()
