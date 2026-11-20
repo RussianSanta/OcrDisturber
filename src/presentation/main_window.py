@@ -310,8 +310,8 @@ class MainWindow(QMainWindow):
         background_layout.addLayout(scale_labels)
         background_layout.addWidget(self._label("Степень заполнения фона"))
         self.background_fill_slider = QSlider(Qt.Orientation.Horizontal)
-        self.background_fill_slider.setRange(50, 500)
-        self.background_fill_slider.setValue(100)
+        self.background_fill_slider.setRange(200, 2000)
+        self.background_fill_slider.setValue(400)
         self.background_fill_slider.setTickPosition(QSlider.TickPosition.NoTicks)
         background_layout.addWidget(self.background_fill_slider)
         self.background_grid_checkbox = QCheckBox("Показывать сетку в предпросмотре")
@@ -436,6 +436,9 @@ class MainWindow(QMainWindow):
         # construction, before this stylesheet sets the A4 page background.
         self.monochrome_preview.set_monochrome(True)
         self.background_type_selectors["punctuation"].toggled.connect(
+            lambda _checked: self._regenerate_background_previews()
+        )
+        self.background_type_selectors["shapes"].toggled.connect(
             lambda _checked: self._regenerate_background_previews()
         )
         self.background_fill_slider.valueChanged.connect(
@@ -606,19 +609,23 @@ class MainWindow(QMainWindow):
 
     def _refresh_background_previews(self) -> None:
         """Refresh punctuation placement and its temporary zone grid."""
-        if not self.background_type_selectors["punctuation"].isChecked():
+        punctuation_enabled = self.background_type_selectors["punctuation"].isChecked()
+        shapes_enabled = self.background_type_selectors["shapes"].isChecked()
+        if not punctuation_enabled and not shapes_enabled:
             for preview in (self.color_preview, self.monochrome_preview):
                 preview.set_background_pattern(None, show_grid=False)
             return
 
         size = (self.color_preview.page.width(), self.color_preview.page.height())
-        image, zones = self.background_pattern_generator.generate_punctuation_pattern(
+        image, zones = self.background_pattern_generator.generate_background_pattern(
             size=size,
             zone_count=self.background_fill_slider.value(),
             median_text_size_pt=self.median_text_size_pt,
             minimum_coefficient=self.background_range.minimum_value / 100,
             maximum_coefficient=self.background_range.maximum_value / 100,
             color=self.background_color,
+            punctuation=punctuation_enabled,
+            shapes=shapes_enabled,
             seed=self.background_pattern_seed,
         )
         for preview in (self.color_preview, self.monochrome_preview):
@@ -630,7 +637,10 @@ class MainWindow(QMainWindow):
 
     def _regenerate_background_previews(self) -> None:
         """Create a new random punctuation arrangement for changed settings."""
-        if self.background_type_selectors["punctuation"].isChecked():
+        if (
+            self.background_type_selectors["punctuation"].isChecked()
+            or self.background_type_selectors["shapes"].isChecked()
+        ):
             self.background_pattern_seed = random.SystemRandom().randrange(2**32)
         self._refresh_background_previews()
 
@@ -641,15 +651,19 @@ class MainWindow(QMainWindow):
 
     def _background_pattern_png(self) -> bytes | None:
         """Generate a print-resolution punctuation image for the DOCX page."""
-        if not self.background_type_selectors["punctuation"].isChecked():
+        punctuation_enabled = self.background_type_selectors["punctuation"].isChecked()
+        shapes_enabled = self.background_type_selectors["shapes"].isChecked()
+        if not punctuation_enabled and not shapes_enabled:
             return None
-        image, _zones = self.background_pattern_generator.generate_punctuation_pattern(
+        image, _zones = self.background_pattern_generator.generate_background_pattern(
             size=(1240, 1754),
             zone_count=self.background_fill_slider.value(),
             median_text_size_pt=self.median_text_size_pt,
             minimum_coefficient=self.background_range.minimum_value / 100,
             maximum_coefficient=self.background_range.maximum_value / 100,
             color=self.background_color,
+            punctuation=punctuation_enabled,
+            shapes=shapes_enabled,
             seed=self.background_pattern_seed,
         )
         byte_array = QByteArray()

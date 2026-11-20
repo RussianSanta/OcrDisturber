@@ -4,7 +4,15 @@ import math
 import random
 
 from PySide6.QtCore import QRectF, QPointF, Qt
-from PySide6.QtGui import QColor, QFont, QFontMetricsF, QImage, QPainter
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QFontMetricsF,
+    QImage,
+    QPainter,
+    QPen,
+    QPolygonF,
+)
 
 
 class BackgroundPatternGenerator:
@@ -38,7 +46,32 @@ class BackgroundPatternGenerator:
         color: QColor | str,
         seed: int | None = None,
     ) -> tuple[QImage, list[QRectF]]:
-        """Render a random punctuation symbol in every equal-area page zone."""
+        """Render punctuation marks in a regular grid of page zones."""
+        return self.generate_background_pattern(
+            size,
+            zone_count,
+            median_text_size_pt,
+            minimum_coefficient,
+            maximum_coefficient,
+            color,
+            punctuation=True,
+            shapes=False,
+            seed=seed,
+        )
+
+    def generate_background_pattern(
+        self,
+        size: tuple[int, int],
+        zone_count: int,
+        median_text_size_pt: float,
+        minimum_coefficient: float,
+        maximum_coefficient: float,
+        color: QColor | str,
+        punctuation: bool,
+        shapes: bool,
+        seed: int | None = None,
+    ) -> tuple[QImage, list[QRectF]]:
+        """Render selected fill types with one instance of each per zone."""
         width, height = size
         image = QImage(width, height, QImage.Format.Format_ARGB32_Premultiplied)
         image.fill(Qt.GlobalColor.transparent)
@@ -47,38 +80,94 @@ class BackgroundPatternGenerator:
         painter = QPainter(image)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
-        painter.setPen(QColor(color))
+        shape_names = ("square", "circle", "triangle")
+        shape_zone_indices: set[int] = set()
+        if shapes:
+            column_count = len({zone.left() for zone in zones})
+            shuffled_indices = list(range(len(zones)))
+            generator.shuffle(shuffled_indices)
+            occupied_cells: list[tuple[int, int]] = []
+            for zone_index in shuffled_indices:
+                row, column = divmod(zone_index, column_count)
+                if any(
+                    abs(row - occupied_row) <= 1
+                    and abs(column - occupied_column) <= 1
+                    for occupied_row, occupied_column in occupied_cells
+                ):
+                    continue
+                shape_zone_indices.add(zone_index)
+                occupied_cells.append((row, column))
 
-        for zone in zones:
-            coefficient = generator.uniform(minimum_coefficient, maximum_coefficient)
-            font_size = max(
-                1,
-                round(median_text_size_pt * coefficient * height / self.A4_HEIGHT_POINTS),
-            )
-            font = QFont("Arial")
-            font.setPixelSize(font_size)
-            painter.setFont(font)
-            metrics = QFontMetricsF(font)
-            symbol = generator.choice(self.SYMBOLS)
-            bounds = metrics.boundingRect(symbol)
-            edge_margin = math.hypot(bounds.width(), bounds.height()) / 2
-            left = max(zone.left(), edge_margin)
-            right = min(zone.right(), width - edge_margin)
-            top = max(zone.top(), edge_margin)
-            bottom = min(zone.bottom(), height - edge_margin)
-            if left > right:
-                left = right = min(width - edge_margin, max(edge_margin, zone.center().x()))
-            if top > bottom:
-                top = bottom = min(height - edge_margin, max(edge_margin, zone.center().y()))
-            point = QPointF(
-                generator.uniform(left, right),
-                generator.uniform(top, bottom),
-            )
-            painter.save()
-            painter.translate(point)
-            painter.rotate(generator.uniform(0.0, 360.0))
-            painter.drawText(QPointF(-bounds.center().x(), -bounds.center().y()), symbol)
-            painter.restore()
+        for zone_index, zone in enumerate(zones):
+            if punctuation:
+                coefficient = generator.uniform(minimum_coefficient, maximum_coefficient)
+                font_size = max(
+                    1,
+                    round(median_text_size_pt * coefficient * height / self.A4_HEIGHT_POINTS),
+                )
+                font = QFont("Arial")
+                # Scaling the font uniformly keeps glyph height and stroke
+                # thickness tied to the same text-size coefficient.
+                font.setPixelSize(font_size)
+                painter.setFont(font)
+                symbol = generator.choice(self.SYMBOLS)
+                bounds = QFontMetricsF(font).boundingRect(symbol)
+                point = QPointF(
+                    generator.uniform(zone.left(), zone.right()),
+                    generator.uniform(zone.top(), zone.bottom()),
+                )
+                painter.setPen(QColor(color))
+                painter.save()
+                painter.translate(point)
+                painter.rotate(generator.uniform(0.0, 360.0))
+                painter.drawText(QPointF(-bounds.center().x(), -bounds.center().y()), symbol)
+                painter.restore()
+
+            if zone_index in shape_zone_indices:
+                coefficient = generator.uniform(minimum_coefficient, maximum_coefficient)
+                size_factor = generator.uniform(1.5, 4.0)
+                shape_size = max(
+                    1.0,
+                    median_text_size_pt
+                    * size_factor
+                    * coefficient
+                    * height
+                    / self.A4_HEIGHT_POINTS,
+                )
+                stroke_width = max(
+                    1.0,
+                    median_text_size_pt
+                    * coefficient
+                    * 0.09
+                    * height
+                    / self.A4_HEIGHT_POINTS,
+                )
+                point = QPointF(
+                    generator.uniform(zone.left(), zone.right()),
+                    generator.uniform(zone.top(), zone.bottom()),
+                )
+                painter.setPen(QPen(QColor(color), stroke_width))
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.save()
+                painter.translate(point)
+                painter.rotate(generator.uniform(0.0, 360.0))
+                half_size = shape_size / 2
+                shape_name = generator.choice(shape_names)
+                if shape_name == "square":
+                    painter.drawRect(QRectF(-half_size, -half_size, shape_size, shape_size))
+                elif shape_name == "circle":
+                    painter.drawEllipse(QRectF(-half_size, -half_size, shape_size, shape_size))
+                else:
+                    painter.drawPolygon(
+                        QPolygonF(
+                            [
+                                QPointF(0, -half_size),
+                                QPointF(half_size, half_size),
+                                QPointF(-half_size, half_size),
+                            ]
+                        )
+                    )
+                painter.restore()
 
         painter.end()
         return image, zones
