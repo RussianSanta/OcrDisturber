@@ -1,4 +1,4 @@
-﻿"""Main application window and its controls."""
+"""Main application window and its controls."""
 
 from pathlib import Path
 import random
