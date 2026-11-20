@@ -4,6 +4,7 @@ from html import escape
 from io import BytesIO
 from pathlib import Path
 import re
+import statistics
 from xml.sax.saxutils import quoteattr
 from zipfile import BadZipFile, ZipFile
 from xml.etree import ElementTree
@@ -48,15 +49,116 @@ class WordDocumentService:
         blocks = self._render_blocks(body)
         return data, blocks or ["<p></p>"]
 
-    def apply_appearance(self, document_data: bytes, text_color: str, background_color: str) -> bytes:
-        """Return a DOCX copy with text and whole-page background colors applied."""
-        for color in (text_color, background_color):
-            if len(color) != 7 or color[0] != "#" or any(
-                character not in "0123456789abcdefABCDEF" for character in color[1:]
+    def median_text_size_pt(self, document_data: bytes) -> float:
+        """Return the median effective font size of text runs in a DOCX."""
+        namespace = f"{self._WORD_NS}"
+        try:
+            with ZipFile(BytesIO(document_data)) as archive:
+                document_root = ElementTree.fromstring(archive.read("word/document.xml"))
+                try:
+                    styles_root = ElementTree.fromstring(archive.read("word/styles.xml"))
+                except KeyError:
+                    styles_root = ElementTree.Element(f"{namespace}styles")
+        except (BadZipFile, KeyError, ElementTree.ParseError):
+            return 12.0
+
+        def size_from_properties(properties: ElementTree.Element | None) -> float | None:
+            if properties is None:
+                return None
+            size = properties.find(f"{namespace}sz")
+            value = size.get(f"{namespace}val", "") if size is not None else ""
+            return int(value) / 2 if value.isdigit() else None
+
+        style_elements = {
+            style.get(f"{namespace}styleId", ""): style
+            for style in styles_root.findall(f"{namespace}style")
+        }
+
+        def style_size(style_id: str, visited: set[str] | None = None) -> float | None:
+            if not style_id or style_id not in style_elements:
+                return None
+            visited = visited or set()
+            if style_id in visited:
+                return None
+            visited.add(style_id)
+            style = style_elements[style_id]
+            own_size = size_from_properties(style.find(f"{namespace}rPr"))
+            if own_size is not None:
+                return own_size
+            based_on = style.find(f"{namespace}basedOn")
+            parent_id = based_on.get(f"{namespace}val", "") if based_on is not None else ""
+            return style_size(parent_id, visited)
+
+        document_defaults = styles_root.find(
+            f"{namespace}docDefaults/{namespace}rPrDefault/{namespace}rPr"
+        )
+        default_size = size_from_properties(document_defaults) or 12.0
+        default_paragraph_style = next(
+            (
+                style.get(f"{namespace}styleId", "")
+                for style in styles_root.findall(f"{namespace}style")
+                if style.get(f"{namespace}type") == "paragraph"
+                and style.get(f"{namespace}default") in {"1", "true"}
+            ),
+            "",
+        )
+
+        sizes: list[float] = []
+        body = document_root.find(f"{namespace}body")
+        if body is None:
+            return default_size
+        for paragraph in body.iter(f"{namespace}p"):
+            paragraph_properties = paragraph.find(f"{namespace}pPr")
+            paragraph_style = paragraph_properties.find(f"{namespace}pStyle") if paragraph_properties is not None else None
+            paragraph_style_id = (
+                paragraph_style.get(f"{namespace}val", "") if paragraph_style is not None else default_paragraph_style
+            )
+            paragraph_size = style_size(paragraph_style_id) or default_size
+            for run in paragraph.iter(f"{namespace}r"):
+                if not any((text.text or "") for text in run.iter(f"{namespace}t")):
+                    continue
+                run_properties = run.find(f"{namespace}rPr")
+                run_size = size_from_properties(run_properties)
+                if run_size is None and run_properties is not None:
+                    character_style = run_properties.find(f"{namespace}rStyle")
+                    character_style_id = (
+                        character_style.get(f"{namespace}val", "") if character_style is not None else ""
+                    )
+                    run_size = style_size(character_style_id)
+                sizes.append(run_size or paragraph_size)
+        return statistics.median(sizes) if sizes else default_size
+
+    def apply_appearance(
+        self,
+        document_data: bytes,
+        text_color: str,
+        background_color: str | None,
+        background_pattern: bytes | None = None,
+    ) -> bytes:
+        """Return a DOCX copy with text colors and optional page pattern applied."""
+        for candidate_color in (text_color, background_color):
+            if candidate_color is None:
+                continue
+            if len(candidate_color) != 7 or candidate_color[0] != "#" or any(
+                character not in "0123456789abcdefABCDEF" for character in candidate_color[1:]
             ):
                 raise ValueError("colors must use the #RRGGBB format")
 
         namespace = f"{{{self._WORD_NS_URI}}}"
+        relationships_namespace = "http://schemas.openxmlformats.org/package/2006/relationships"
+        office_relationships_namespace = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+        drawing_namespaces = {
+            "w": self._WORD_NS_URI,
+            "r": office_relationships_namespace,
+            "wp": "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing",
+            "a": "http://schemas.openxmlformats.org/drawingml/2006/main",
+            "pic": "http://schemas.openxmlformats.org/drawingml/2006/picture",
+        }
+        image_path = "word/media/background_pattern.png"
+        relationships_path = "word/_rels/document.xml.rels"
+        content_types_path = "[Content_Types].xml"
+        header_path = "word/header_background.xml"
+        header_relationships_path = "word/_rels/header_background.xml.rels"
         with ZipFile(BytesIO(document_data)) as source_archive:
             try:
                 document_xml = source_archive.read("word/document.xml")
@@ -81,30 +183,153 @@ class WordDocumentService:
                 color_element = properties.find(f"{namespace}color")
                 if color_element is None:
                     color_element = ElementTree.SubElement(properties, f"{namespace}color")
-                color_element.set(f"{namespace}val", color[1:].upper())
+                color_element.set(f"{namespace}val", text_color[1:].upper())
                 for attribute in ("themeColor", "themeTint", "themeShade"):
                     color_element.attrib.pop(f"{namespace}{attribute}", None)
                 run_count += 1
             if run_count == 0:
                 raise ValueError("DOCX contains no text runs to color")
 
-            background = root.find(f"{namespace}background")
-            if background is None:
-                background = ElementTree.Element(f"{namespace}background")
-            for existing in root.findall(f"{namespace}background"):
-                root.remove(existing)
-            background.set(f"{namespace}color", background_color[1:].upper())
-            for attribute in ("themeColor", "themeTint", "themeShade"):
-                background.attrib.pop(f"{namespace}{attribute}", None)
-            root.insert(0, background)
+            relationship_xml = None
+            content_types_xml = None
+            header_xml = None
+            header_relationships_xml = None
+            if background_pattern is not None:
+                try:
+                    relationships_root = ElementTree.fromstring(source_archive.read(relationships_path))
+                except KeyError:
+                    relationships_root = ElementTree.Element(
+                        f"{{{relationships_namespace}}}Relationships"
+                    )
+                relationship_ids = [
+                    int(relationship.get("Id", "")[3:])
+                    for relationship in relationships_root.findall(
+                        f"{{{relationships_namespace}}}Relationship"
+                    )
+                    if relationship.get("Id", "").startswith("rId")
+                    and relationship.get("Id", "")[3:].isdigit()
+                ]
+                header_relationship_id = f"rId{max(relationship_ids, default=0) + 1}"
+                ElementTree.SubElement(
+                    relationships_root,
+                    f"{{{relationships_namespace}}}Relationship",
+                    {
+                        "Id": header_relationship_id,
+                        "Type": f"{office_relationships_namespace}/header",
+                        "Target": "header_background.xml",
+                    },
+                )
+                relationship_xml = ElementTree.tostring(
+                    relationships_root, encoding="utf-8", xml_declaration=True
+                )
+
+                header_relationship_namespace = f"{{{relationships_namespace}}}"
+                header_relationships_root = ElementTree.Element(
+                    f"{header_relationship_namespace}Relationships"
+                )
+                ElementTree.SubElement(
+                    header_relationships_root,
+                    f"{header_relationship_namespace}Relationship",
+                    {
+                        "Id": "rId1",
+                        "Type": f"{office_relationships_namespace}/image",
+                        "Target": "media/background_pattern.png",
+                    },
+                )
+                header_relationships_xml = ElementTree.tostring(
+                    header_relationships_root, encoding="utf-8", xml_declaration=True
+                )
+
+                page_width = 11_906 * 635
+                page_height = 16_838 * 635
+                section_properties = root.findall(f".//{namespace}sectPr")
+                if section_properties:
+                    page_size = section_properties[-1].find(f"{namespace}pgSz")
+                    if page_size is not None:
+                        page_width = int(page_size.get(f"{namespace}w", "13860")) * 635
+                        page_height = int(page_size.get(f"{namespace}h", "17699")) * 635
+                    for section in section_properties:
+                        header_reference = ElementTree.Element(
+                            f"{namespace}headerReference",
+                            {
+                                f"{namespace}type": "default",
+                                f"{{{office_relationships_namespace}}}id": header_relationship_id,
+                            },
+                        )
+                        section.insert(0, header_reference)
+
+                for prefix, uri in drawing_namespaces.items():
+                    ElementTree.register_namespace(prefix, uri)
+                header_xml = f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:hdr xmlns:w="{self._WORD_NS_URI}" xmlns:r="{office_relationships_namespace}" xmlns:wp="{drawing_namespaces['wp']}" xmlns:a="{drawing_namespaces['a']}" xmlns:pic="{drawing_namespaces['pic']}">
+  <w:p><w:r><w:drawing><wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="0" behindDoc="1" locked="0" layoutInCell="1" allowOverlap="1">
+    <wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="page"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="page"><wp:posOffset>0</wp:posOffset></wp:positionV>
+    <wp:extent cx="{page_width}" cy="{page_height}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapNone/><wp:docPr id="1" name="Punctuation background"/><wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr>
+    <a:graphic><a:graphicData uri="{drawing_namespaces['pic']}"><pic:pic><pic:nvPicPr><pic:cNvPr id="0" name="Punctuation background"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rId1"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{page_width}" cy="{page_height}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic>
+  </wp:anchor></w:drawing></w:r></w:p>
+</w:hdr>'''.encode("utf-8")
+
+                try:
+                    content_types_root = ElementTree.fromstring(source_archive.read(content_types_path))
+                except KeyError:
+                    content_types_root = ElementTree.Element(
+                        "{http://schemas.openxmlformats.org/package/2006/content-types}Types"
+                    )
+                content_types_namespace = "{http://schemas.openxmlformats.org/package/2006/content-types}"
+                has_png_default = any(
+                    item.get("Extension", "").lower() == "png"
+                    for item in content_types_root.findall(f"{content_types_namespace}Default")
+                )
+                if not has_png_default:
+                    ElementTree.SubElement(
+                        content_types_root,
+                        f"{content_types_namespace}Default",
+                        {"Extension": "png", "ContentType": "image/png"},
+                    )
+                ElementTree.SubElement(
+                    content_types_root,
+                    f"{content_types_namespace}Override",
+                    {
+                        "PartName": "/word/header_background.xml",
+                        "ContentType": "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+                    },
+                )
+                content_types_xml = ElementTree.tostring(
+                    content_types_root, encoding="utf-8", xml_declaration=True
+                )
 
             updated_xml = ElementTree.tostring(root, encoding="utf-8", xml_declaration=True)
             updated_xml = self._preserve_namespace_declarations(updated_xml, namespace_declarations)
             output = BytesIO()
             with ZipFile(output, "w") as result_archive:
+                written_paths: set[str] = set()
                 for item in source_archive.infolist():
-                    contents = updated_xml if item.filename == "word/document.xml" else source_archive.read(item.filename)
+                    if item.filename == "word/document.xml":
+                        contents = updated_xml
+                    elif item.filename == relationships_path and relationship_xml is not None:
+                        contents = relationship_xml
+                    elif item.filename == content_types_path and content_types_xml is not None:
+                        contents = content_types_xml
+                    elif item.filename == header_path and header_xml is not None:
+                        contents = header_xml
+                    elif item.filename == header_relationships_path and header_relationships_xml is not None:
+                        contents = header_relationships_xml
+                    elif item.filename == image_path and background_pattern is not None:
+                        contents = background_pattern
+                    else:
+                        contents = source_archive.read(item.filename)
                     result_archive.writestr(item, contents)
+                    written_paths.add(item.filename)
+                if relationship_xml is not None and relationships_path not in written_paths:
+                    result_archive.writestr(relationships_path, relationship_xml)
+                if content_types_xml is not None and content_types_path not in written_paths:
+                    result_archive.writestr(content_types_path, content_types_xml)
+                if header_xml is not None:
+                    result_archive.writestr(header_path, header_xml)
+                if header_relationships_xml is not None:
+                    result_archive.writestr(header_relationships_path, header_relationships_xml)
+                if background_pattern is not None and image_path not in written_paths:
+                    result_archive.writestr(image_path, background_pattern)
         return output.getvalue()
 
     @staticmethod

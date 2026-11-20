@@ -2,9 +2,55 @@
 
 from html import escape
 
-from PySide6.QtCore import QPoint, Qt
-from PySide6.QtGui import QColor, QImage, QPainter, QPixmap, QTextCharFormat, QTextCursor, QTextDocument
-from PySide6.QtWidgets import QFrame, QLabel, QSizePolicy, QTextEdit, QVBoxLayout
+from PySide6.QtCore import QPoint, QRectF, Qt
+from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap, QTextCharFormat, QTextCursor, QTextDocument
+from PySide6.QtWidgets import QFrame, QLabel, QSizePolicy, QTextEdit, QVBoxLayout, QWidget
+
+
+class BackgroundPatternOverlay(QWidget):
+    """Paint a generated background pattern and its temporary zone grid."""
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self._image: QImage | None = None
+        self._zones: list[QRectF] = []
+        self._show_grid = False
+
+    def set_pattern(
+        self,
+        image: QImage | None,
+        zones: list[QRectF] | None,
+        show_grid: bool,
+    ) -> None:
+        self._image = image
+        self._zones = zones or []
+        self._show_grid = show_grid
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if self._image is not None:
+            painter.drawImage(self.rect(), self._image)
+        if self._show_grid:
+            pen = QPen(QColor(93, 107, 130, 125), 1, Qt.PenStyle.DashLine)
+            painter.setPen(pen)
+            segments: set[tuple[int, int, int, int]] = set()
+            for zone in self._zones:
+                left, top = round(zone.left()), round(zone.top())
+                right, bottom = round(zone.right()), round(zone.bottom())
+                segments.update(
+                    {
+                        (left, top, right, top),
+                        (left, bottom, right, bottom),
+                        (left, top, left, bottom),
+                        (right, top, right, bottom),
+                    }
+                )
+            for x1, y1, x2, y2 in segments:
+                painter.drawLine(x1, y1, x2, y2)
 
 
 class PreviewPane(QFrame):
@@ -21,6 +67,7 @@ class PreviewPane(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 4, 0, 12)
         layout.setSpacing(4)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         self.title_label = QLabel(title)
         self.title_label.setObjectName("previewTitle")
@@ -31,7 +78,7 @@ class PreviewPane(QFrame):
 
         self.page = QFrame()
         self.page.setObjectName("a4Page")
-        self.page.setFixedSize(438, 620)
+        self.page.setFixedSize(500, 707)
         page_layout = QVBoxLayout(self.page)
         page_layout.setContentsMargins(20, 20, 20, 20)
         self.content = QTextEdit()
@@ -47,6 +94,21 @@ class PreviewPane(QFrame):
         page_layout.addWidget(self.content)
         layout.addWidget(self.page, alignment=Qt.AlignmentFlag.AlignHCenter)
 
+        self._background_pattern_overlay = BackgroundPatternOverlay(self.page)
+        self._background_pattern_overlay.setGeometry(self.page.rect())
+        self._background_pattern_overlay.lower()
+        self.content.raise_()
+
+        self._empty_placeholder = QLabel("Загрузите документ для работы", self.page)
+        self._empty_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_placeholder.setWordWrap(True)
+        self._empty_placeholder.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._empty_placeholder.setStyleSheet(
+            "font-size: 18pt; font-weight: bold; color: #6b7280; background: transparent;"
+        )
+        self._empty_placeholder.setGeometry(self.page.rect())
+        self._empty_placeholder.raise_()
+
         self._monochrome_overlay = QLabel(self.page)
         self._monochrome_overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self._monochrome_overlay.setGeometry(self.page.rect())
@@ -57,7 +119,9 @@ class PreviewPane(QFrame):
 
     def set_document_paragraphs(self, paragraphs: list[str]) -> None:
         """Split formatted paragraphs across pages based on the A4 text area."""
-        paragraphs = paragraphs or ["<p>Загрузите документ Word</p>"]
+        has_document = bool(paragraphs)
+        self._empty_placeholder.setVisible(not has_document)
+        paragraphs = paragraphs or ["<p></p>"]
         measure = QTextDocument(self.content)
         measure.setDocumentMargin(0)
         measure.setDefaultFont(self.content.font())
@@ -134,6 +198,25 @@ class PreviewPane(QFrame):
         page_color = self.background_color.name() if self.background_color is not None else "#ffffff"
         self.page.setStyleSheet(
             f"QFrame#a4Page {{ background-color: {page_color}; border: 1px solid #c9ced8; }}"
+        )
+        self._refresh_monochrome_overlay()
+
+    def set_background_pattern(
+        self,
+        image: QImage | None,
+        zones: list[QRectF] | None = None,
+        show_grid: bool = False,
+    ) -> None:
+        """Set the generated pattern shown beneath document text."""
+        self._background_pattern_overlay.set_pattern(image, zones, show_grid)
+        self._refresh_monochrome_overlay()
+
+    def set_background_grid_visible(self, visible: bool) -> None:
+        """Toggle the grid without changing the generated background image."""
+        self._background_pattern_overlay.set_pattern(
+            self._background_pattern_overlay._image,
+            self._background_pattern_overlay._zones,
+            visible,
         )
         self._refresh_monochrome_overlay()
 
