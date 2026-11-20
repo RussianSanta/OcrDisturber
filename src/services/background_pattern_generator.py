@@ -69,6 +69,7 @@ class BackgroundPatternGenerator:
         color: QColor | str,
         punctuation: bool,
         shapes: bool,
+        pepper: bool = False,
         seed: int | None = None,
     ) -> tuple[QImage, list[QRectF]]:
         """Render selected fill types with one instance of each per zone."""
@@ -97,6 +98,10 @@ class BackgroundPatternGenerator:
                     continue
                 shape_zone_indices.add(zone_index)
                 occupied_cells.append((row, column))
+        pepper_zone_indices: set[int] = set()
+        if pepper:
+            pepper_count = max(1, round(len(zones) * 0.1))
+            pepper_zone_indices = set(generator.sample(range(len(zones)), pepper_count))
 
         for zone_index, zone in enumerate(zones):
             if punctuation:
@@ -168,6 +173,61 @@ class BackgroundPatternGenerator:
                         )
                     )
                 painter.restore()
+
+            if zone_index in pepper_zone_indices:
+                coefficient = generator.uniform(minimum_coefficient, maximum_coefficient)
+                text_height = max(
+                    1.0,
+                    median_text_size_pt * coefficient * height / self.A4_HEIGHT_POINTS,
+                )
+                speck_count = generator.randint(18, 40)
+                cluster_radius = generator.uniform(1.0, 3.0)
+                cluster_center = zone.center()
+                radius_x = zone.width() * cluster_radius
+                radius_y = zone.height() * cluster_radius
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(color))
+                for _ in range(speck_count):
+                    speck_size = max(0.8, text_height * generator.uniform(0.08, 0.25))
+                    distance = math.sqrt(generator.random())
+                    angle = generator.uniform(0.0, 2.0 * math.pi)
+                    x = min(
+                        width,
+                        max(
+                            0.0,
+                            cluster_center.x() + math.cos(angle) * radius_x * distance,
+                        ),
+                    )
+                    y = min(
+                        height,
+                        max(
+                            0.0,
+                            cluster_center.y() + math.sin(angle) * radius_y * distance,
+                        ),
+                    )
+                    half_size = speck_size / 2
+                    speck_type = generator.randrange(4)
+                    if speck_type == 0:
+                        painter.drawEllipse(QRectF(x - half_size, y - half_size, speck_size, speck_size))
+                    elif speck_type == 1:
+                        painter.drawRect(QRectF(x - half_size, y - half_size, speck_size, speck_size))
+                    elif speck_type == 2:
+                        painter.drawPolygon(
+                            QPolygonF(
+                                [
+                                    QPointF(x, y - half_size),
+                                    QPointF(x + half_size, y + half_size),
+                                    QPointF(x - half_size, y + half_size),
+                                ]
+                            )
+                        )
+                    else:
+                        painter.setPen(QPen(QColor(color), max(0.6, speck_size * 0.35)))
+                        painter.drawLine(
+                            QPointF(x - speck_size, y),
+                            QPointF(x + speck_size, y),
+                        )
+                        painter.setPen(Qt.PenStyle.NoPen)
 
         painter.end()
         return image, zones

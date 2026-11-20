@@ -209,7 +209,9 @@ class MainWindow(QMainWindow):
         self.file_path.setClearButtonEnabled(False)
         self.file_button = QPushButton("Обзор…")
         self.file_button.clicked.connect(self.choose_word_file)
-        file_layout.addWidget(self._label("Выберите файл"))
+        file_prompt = self._label("Выберите файл")
+        file_prompt.setStyleSheet("font-weight: bold;")
+        file_layout.addWidget(file_prompt)
         file_layout.addWidget(self.file_path, 1)
         file_layout.addWidget(self.file_button)
         root.addWidget(self.file_panel)
@@ -315,7 +317,7 @@ class MainWindow(QMainWindow):
         self.background_fill_slider.setTickPosition(QSlider.TickPosition.NoTicks)
         background_layout.addWidget(self.background_fill_slider)
         self.background_grid_checkbox = QCheckBox("Показывать сетку в предпросмотре")
-        self.background_grid_checkbox.setChecked(True)
+        self.background_grid_checkbox.setChecked(False)
         background_layout.addWidget(self.background_grid_checkbox)
         self.download_button = QPushButton("Скачать файл")
         self.download_button.setObjectName("downloadButton")
@@ -439,6 +441,9 @@ class MainWindow(QMainWindow):
             lambda _checked: self._regenerate_background_previews()
         )
         self.background_type_selectors["shapes"].toggled.connect(
+            lambda _checked: self._regenerate_background_previews()
+        )
+        self.background_type_selectors["pepper"].toggled.connect(
             lambda _checked: self._regenerate_background_previews()
         )
         self.background_fill_slider.valueChanged.connect(
@@ -611,7 +616,8 @@ class MainWindow(QMainWindow):
         """Refresh punctuation placement and its temporary zone grid."""
         punctuation_enabled = self.background_type_selectors["punctuation"].isChecked()
         shapes_enabled = self.background_type_selectors["shapes"].isChecked()
-        if not punctuation_enabled and not shapes_enabled:
+        pepper_enabled = self.background_type_selectors["pepper"].isChecked()
+        if not punctuation_enabled and not shapes_enabled and not pepper_enabled:
             for preview in (self.color_preview, self.monochrome_preview):
                 preview.set_background_pattern(None, show_grid=False)
             return
@@ -626,6 +632,7 @@ class MainWindow(QMainWindow):
             color=self.background_color,
             punctuation=punctuation_enabled,
             shapes=shapes_enabled,
+            pepper=pepper_enabled,
             seed=self.background_pattern_seed,
         )
         for preview in (self.color_preview, self.monochrome_preview):
@@ -640,6 +647,7 @@ class MainWindow(QMainWindow):
         if (
             self.background_type_selectors["punctuation"].isChecked()
             or self.background_type_selectors["shapes"].isChecked()
+            or self.background_type_selectors["pepper"].isChecked()
         ):
             self.background_pattern_seed = random.SystemRandom().randrange(2**32)
         self._refresh_background_previews()
@@ -653,7 +661,8 @@ class MainWindow(QMainWindow):
         """Generate a print-resolution punctuation image for the DOCX page."""
         punctuation_enabled = self.background_type_selectors["punctuation"].isChecked()
         shapes_enabled = self.background_type_selectors["shapes"].isChecked()
-        if not punctuation_enabled and not shapes_enabled:
+        pepper_enabled = self.background_type_selectors["pepper"].isChecked()
+        if not punctuation_enabled and not shapes_enabled and not pepper_enabled:
             return None
         image, _zones = self.background_pattern_generator.generate_background_pattern(
             size=(1240, 1754),
@@ -664,6 +673,7 @@ class MainWindow(QMainWindow):
             color=self.background_color,
             punctuation=punctuation_enabled,
             shapes=shapes_enabled,
+            pepper=pepper_enabled,
             seed=self.background_pattern_seed,
         )
         byte_array = QByteArray()

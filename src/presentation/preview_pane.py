@@ -99,6 +99,16 @@ class PreviewPane(QFrame):
         self._background_pattern_overlay.lower()
         self.content.raise_()
 
+        self._empty_placeholder = QLabel("Загрузите документ для работы", self.page)
+        self._empty_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_placeholder.setWordWrap(True)
+        self._empty_placeholder.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._empty_placeholder.setStyleSheet(
+            "font-size: 18pt; font-weight: bold; color: #6b7280; background: transparent;"
+        )
+        self._empty_placeholder.setGeometry(self.page.rect())
+        self._empty_placeholder.raise_()
+
         self._monochrome_overlay = QLabel(self.page)
         self._monochrome_overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self._monochrome_overlay.setGeometry(self.page.rect())
@@ -109,7 +119,9 @@ class PreviewPane(QFrame):
 
     def set_document_paragraphs(self, paragraphs: list[str]) -> None:
         """Split formatted paragraphs across pages based on the A4 text area."""
-        paragraphs = paragraphs or ["<p>Загрузите документ Word</p>"]
+        has_document = bool(paragraphs)
+        self._empty_placeholder.setVisible(not has_document)
+        paragraphs = paragraphs or ["<p></p>"]
         measure = QTextDocument(self.content)
         measure.setDocumentMargin(0)
         measure.setDefaultFont(self.content.font())
