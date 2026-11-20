@@ -2,9 +2,55 @@
 
 from html import escape
 
-from PySide6.QtCore import QPoint, Qt
-from PySide6.QtGui import QColor, QImage, QPainter, QPixmap, QTextCharFormat, QTextCursor, QTextDocument
-from PySide6.QtWidgets import QFrame, QLabel, QSizePolicy, QTextEdit, QVBoxLayout
+from PySide6.QtCore import QPoint, QRectF, Qt
+from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap, QTextCharFormat, QTextCursor, QTextDocument
+from PySide6.QtWidgets import QFrame, QLabel, QSizePolicy, QTextEdit, QVBoxLayout, QWidget
+
+
+class BackgroundPatternOverlay(QWidget):
+    """Paint a generated background pattern and its temporary zone grid."""
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self._image: QImage | None = None
+        self._zones: list[QRectF] = []
+        self._show_grid = False
+
+    def set_pattern(
+        self,
+        image: QImage | None,
+        zones: list[QRectF] | None,
+        show_grid: bool,
+    ) -> None:
+        self._image = image
+        self._zones = zones or []
+        self._show_grid = show_grid
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if self._image is not None:
+            painter.drawImage(self.rect(), self._image)
+        if self._show_grid:
+            pen = QPen(QColor(93, 107, 130, 125), 1, Qt.PenStyle.DashLine)
+            painter.setPen(pen)
+            segments: set[tuple[int, int, int, int]] = set()
+            for zone in self._zones:
+                left, top = round(zone.left()), round(zone.top())
+                right, bottom = round(zone.right()), round(zone.bottom())
+                segments.update(
+                    {
+                        (left, top, right, top),
+                        (left, bottom, right, bottom),
+                        (left, top, left, bottom),
+                        (right, top, right, bottom),
+                    }
+                )
+            for x1, y1, x2, y2 in segments:
+                painter.drawLine(x1, y1, x2, y2)
 
 
 class PreviewPane(QFrame):
@@ -47,6 +93,11 @@ class PreviewPane(QFrame):
         self.content.setTabStopDistance(32)
         page_layout.addWidget(self.content)
         layout.addWidget(self.page, alignment=Qt.AlignmentFlag.AlignHCenter)
+
+        self._background_pattern_overlay = BackgroundPatternOverlay(self.page)
+        self._background_pattern_overlay.setGeometry(self.page.rect())
+        self._background_pattern_overlay.lower()
+        self.content.raise_()
 
         self._monochrome_overlay = QLabel(self.page)
         self._monochrome_overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
@@ -135,6 +186,25 @@ class PreviewPane(QFrame):
         page_color = self.background_color.name() if self.background_color is not None else "#ffffff"
         self.page.setStyleSheet(
             f"QFrame#a4Page {{ background-color: {page_color}; border: 1px solid #c9ced8; }}"
+        )
+        self._refresh_monochrome_overlay()
+
+    def set_background_pattern(
+        self,
+        image: QImage | None,
+        zones: list[QRectF] | None = None,
+        show_grid: bool = False,
+    ) -> None:
+        """Set the generated pattern shown beneath document text."""
+        self._background_pattern_overlay.set_pattern(image, zones, show_grid)
+        self._refresh_monochrome_overlay()
+
+    def set_background_grid_visible(self, visible: bool) -> None:
+        """Toggle the grid without changing the generated background image."""
+        self._background_pattern_overlay.set_pattern(
+            self._background_pattern_overlay._image,
+            self._background_pattern_overlay._zones,
+            visible,
         )
         self._refresh_monochrome_overlay()
 
